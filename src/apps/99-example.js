@@ -1,10 +1,14 @@
 /* =====================================================================
    EXAMPLE APP: how to add your own app
    ---------------------------------------------------------------------
-   Copy this block, remove the comment markers, change the id/name, and
-   rebuild (node build.js), or paste it at the end of the script in a
-   built myos.html. That's all: the app gets a desktop icon, a start
-   menu entry, a window, and (if fileTypes is set) opens matching files.
+   Three ways to add an app:
+   1. Save the block below (without the comment markers) as a .js file
+      and install it in Nimbus: Store > Install from file.
+   2. Put it in src/apps/ and rebuild with "node build.js".
+   3. Paste it at the end of the script in a built nimbus.html.
+   The app appears in the launcher, can be pinned to the shelf or the
+   desktop, gets windows, and (if fileTypes is set) opens those files.
+   Set optional: true to make it installable from the Store instead.
 
    OS.registerApp({
      id: 'hello',                       // unique id (also the key for saved window size and app state)

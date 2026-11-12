@@ -1,79 +1,94 @@
 <!DOCTYPE html>
 <!--
 =====================================================================
- MyOS: a portable, single-file web desktop
+ NIMBUS: a portable, single-file web desktop
 =====================================================================
 
- Double-click this file to open it in any modern browser (Chrome,
- Edge, Firefox, Safari). It needs no install, no internet and no
- special permissions. Everything (the OS, the apps and ALL of your
- files and settings) lives inside this one .html file.
+ Double-click this file to open it in Chrome, Edge, Firefox or Safari.
+ No install, no internet and no special permissions are needed.
+ The whole system (apps, settings and ALL of your files) lives inside
+ this one .html file. Carry it on a USB stick or a cloud drive.
 
  HOW SAVING WORKS
- * Chrome / Edge: the first time you save (Ctrl+S / Cmd+S, or the
-   save button in the taskbar), a "Save as" dialog opens. Pick THIS
-   file (myos.html) to overwrite it. For the rest of the session every
-   save silently overwrites that same file with one keystroke. After
-   you close the tab and reopen the file, the first save asks again.
- * Firefox / Safari, or Chrome/Edge with the File System Access API
-   blocked by policy: each save downloads a complete new copy named
-   myos.html (your browser may call it "myos (1).html"). Replace your
-   old file with the new one, for example by copying it back onto your
-   USB stick. The old file is never changed.
- * A dot on the save button means there are unsaved changes. The
-   browser warns you if you try to close the tab with unsaved changes.
+ * Chrome / Edge: the first time you save (Ctrl+S / Cmd+S, or the save
+   button on the shelf), a "Save as" dialog opens. Pick THIS file
+   (nimbus.html) to overwrite it. For the rest of the session every
+   save overwrites that same file instantly. After you reopen the file,
+   the first save asks again.
+ * Firefox / Safari, or Chrome/Edge with direct file access blocked by
+   policy: each save downloads a complete new copy named nimbus.html
+   (your browser may call it "nimbus (1).html"). Replace your old file
+   with the new one. The old file is never changed.
+ * A dot on the save button means there are unsaved changes, and the
+   browser warns you before you close the tab with unsaved changes.
 
  CRASH RECOVERY BACKUP
  While you have unsaved changes, a backup is written to this browser's
  local storage every 30 seconds. If the tab crashes, reopen the same
  file on the SAME computer and browser and you will be offered the
- backup. The backup never leaves that computer, it is not part of the
- .html file, and if you use a password the backup is encrypted too.
- On a shared or school computer, a backup can stay behind in that
- browser profile. Use a password if that matters to you.
+ backup. It never leaves that computer and is not part of the file.
+ With a password set, the backup is encrypted too. On a shared
+ computer you can remove it in Settings > Storage.
 
  PASSWORD
- You can set an optional password on first launch or later in
- Settings. With a password, all data inside the file is encrypted with
- AES-GCM using a key derived from your password (PBKDF2-SHA-256,
- 600,000 iterations). Nothing readable is stored in the file.
- THERE IS NO PASSWORD RECOVERY. If you forget it, your data is gone.
- "Lock now" in the start menu drops the decrypted data from memory and
- returns to the lock screen.
+ Optional, set during setup or later in Settings. With a password, all
+ data in the file is encrypted with AES-GCM using a key derived from
+ your password (PBKDF2-SHA-256, 600,000 iterations); nothing readable
+ is stored. THERE IS NO PASSWORD RECOVERY: forget it and the data is
+ gone. "Lock now" (quick settings or Settings) drops the decrypted data
+ from memory and shows the lock screen.
 
- ADDING AN APP (for developers)
- Apps register through one call: OS.registerApp({ id, name, icon,
- fileTypes, defaultSize, singleInstance, launch(win, args) { ... } }).
- See the commented example app at the very end of the script, and the
- source tree (src/apps/*.js, built with "node build.js").
+ THE BROWSER APP
+ Nimbus itself never uses the network. The Browser app goes online only
+ when you visit a site. Many big sites (Google, YouTube, school
+ portals) refuse to be shown inside another page; use "Open in new
+ tab" for those. Your own HTML files open in a locked-down sandbox.
+
+ USING IT AS YOUR EVERYDAY DESKTOP (e.g. on an old laptop)
+ Open it full screen (quick settings > Full screen), or start Chrome
+ in app mode for a borderless window (Settings > About shows the exact
+ command). Keyboard: Ctrl+K opens the launcher. Drag windows to a
+ screen edge to snap them. Right-click almost anything for options.
+
+ ADDING AN APP
+ Developers: an app is one OS.registerApp({ id, name, icon, launch(win,
+ args) {...} }) call. Either add a file to src/apps/ and run
+ "node build.js", or install a .js file at runtime from the Store
+ ("Install from file"; the Store can download an example). See the
+ commented example at the end of the script.
 
  KNOWN LIMITATIONS
- * The file grows with your data. Imported binary files are stored as
-   base64, which is about 33% larger than the original. Very large
-   files (hundreds of MB) will be slow to open and save.
- * Browser-reserved shortcuts (Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Tab...)
-   belong to the browser and are not intercepted.
+ * The file grows with your data. Imported pictures and other binary
+   files are stored as base64 (about 33% larger than the original).
+   Very large files (hundreds of MB) are slow to open and save.
+ * Browser-reserved shortcuts (Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Tab,
+   F11...) belong to the browser and are not intercepted.
  * In Firefox/Safari every save creates a new download you must move
    into place yourself.
+ * Sounds may stay silent until your first click (browsers block audio
+   before any interaction). Alarms ring only while Nimbus is open.
  * JavaScript cannot securely wipe memory. "Lock now" drops every
-   reference to your decrypted data, and the browser frees it later.
+   reference to your decrypted data; the browser frees it later.
  * Drag-and-drop between folders needs a mouse; on touch screens use
-   the Move button instead.
+   "Move to" or Copy/Cut/Paste.
+
+ Font: Figtree (SIL Open Font License 1.1). Everything else was made
+ for Nimbus.
 =====================================================================
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8" data-keep>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" data-keep>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'" data-keep>
-<title data-keep>MyOS</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-src https: http: blob: data:; base-uri 'none'; form-action 'none'" data-keep>
+<title data-keep>Nimbus</title>
 <style data-keep>
 /*@@CSS@@*/
 </style>
 </head>
 <body>
 <div id="os-root" data-keep></div>
-<noscript data-keep><p style="font:16px sans-serif;padding:2em">MyOS needs JavaScript to run.</p></noscript>
+<noscript data-keep><p style="font:16px sans-serif;padding:2em">Nimbus needs JavaScript to run.</p></noscript>
 <script type="application/json" id="os-data" data-keep>null</script>
 <script data-keep>
 /*@@JS@@*/

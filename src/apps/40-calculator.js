@@ -85,7 +85,11 @@
     id: 'calculator',
     name: 'Calculator',
     icon: OS.appIcons.calculator,
-    defaultSize: { w: 320, h: 470 },
+    optional: true,
+    category: 'Utilities',
+    description: 'Everyday arithmetic with brackets, powers and percentages, plus a history tape. Type with your keyboard.',
+    keywords: 'math sum',
+    defaultSize: { w: 340, h: 520 },
     launch: function (win) {
       var expr = '', justEvaluated = false;
       var exprEl = h('div', { class: 'calc-expr', 'aria-live': 'polite' });
@@ -103,8 +107,20 @@
         var cls = 'calc-key' + (/[\/*\-+^%()]/.test(k[1]) ? ' op' : '') + (k[1] === '=' ? ' eq' : '') + (k[1] === 'clear' || k[1] === 'back' ? ' fn' : '');
         pad.appendChild(h('button', { class: cls, type: 'button', tabindex: '-1', onclick: function () { press(k[1]); win.body.focus(); } }, k[0]));
       });
+      var tape = h('div', { class: 'calc-tape', hidden: true });
+      var tapeBtn = h('button', { class: 'icon-btn sm calc-tape-btn', type: 'button', title: 'History', 'aria-label': 'History', html: OS.icons.history, tabindex: '-1',
+        onclick: function () { tape.hidden = !tape.hidden; tapeBtn.classList.toggle('active', !tape.hidden); renderTape(); win.body.focus(); } });
+      var hist = [];
+      function renderTape() {
+        tape.textContent = '';
+        if (!hist.length) tape.appendChild(h('div', { class: 'calc-tape-empty' }, 'No calculations yet'));
+        hist.slice().reverse().forEach(function (x) {
+          tape.appendChild(h('button', { class: 'calc-tape-row', type: 'button', tabindex: '-1', title: 'Use this result', onclick: function () { expr = x.r; justEvaluated = true; exprEl.textContent = x.r; resEl.textContent = x.e + ' ='; tape.hidden = true; tapeBtn.classList.remove('active'); win.body.focus(); } },
+            h('span', null, x.e + ' ='), h('b', null, x.r)));
+        });
+      }
       win.body.classList.add('app-calc');
-      win.body.append(h('div', { class: 'calc-display' }, exprEl, resEl), pad);
+      win.body.append(h('div', { class: 'calc-display' }, tapeBtn, exprEl, resEl), tape, pad);
 
       function show() {
         exprEl.textContent = expr.replace(/\*/g, '×').replace(/\//g, '÷') || '0';
@@ -116,7 +132,11 @@
         if (k === 'clear') { expr = ''; justEvaluated = false; resEl.textContent = ''; }
         else if (k === 'back') { expr = expr.slice(0, -1); justEvaluated = false; }
         else if (k === '=') {
-          try { var v = format(evaluate(expr)); resEl.textContent = expr + ' ='; resEl.classList.remove('err'); expr = v; justEvaluated = true; exprEl.textContent = v; return; }
+          try {
+            var v = format(evaluate(expr)), shown = expr.replace(/\*/g, '×').replace(/\//g, '÷');
+            if (expr && expr !== v) { hist.push({ e: shown, r: v }); if (hist.length > 50) hist.shift(); if (!tape.hidden) renderTape(); }
+            resEl.textContent = shown + ' ='; resEl.classList.remove('err'); expr = v; justEvaluated = true; exprEl.textContent = v; return;
+          }
           catch (e) { resEl.textContent = e.message; resEl.classList.add('err'); justEvaluated = true; return; }
         } else {
           if (justEvaluated && /[0-9.(]/.test(k)) expr = '';

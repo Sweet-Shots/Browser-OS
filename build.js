@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Build: inline all CSS and JS from src/ into dist/myos.html.
+ * Build: inline all CSS, JS and fonts from src/ into dist/nimbus.html.
  * No dependencies. Usage: node build.js
  *
  * Order: src/styles/*.css (sorted), then JS: src/core/*.js (sorted),
@@ -13,7 +13,7 @@ const path = require('path');
 
 const SRC = path.join(__dirname, 'src');
 const OUT_DIR = path.join(__dirname, 'dist');
-const OUT = path.join(OUT_DIR, 'myos.html');
+const OUT = path.join(OUT_DIR, 'nimbus.html');
 
 function files(dir, ext) {
   return fs.readdirSync(path.join(SRC, dir)).filter(f => f.endsWith(ext)).sort().map(f => path.join(SRC, dir, f));
@@ -21,7 +21,12 @@ function files(dir, ext) {
 function read(f) { return fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n'); }
 function rel(f) { return path.relative(__dirname, f).split(path.sep).join('/'); }
 
-const css = files('styles', '.css').map(f => `/* ---- ${rel(f)} ---- */\n${read(f)}`).join('\n');
+let css = files('styles', '.css').map(f => `/* ---- ${rel(f)} ---- */\n${read(f)}`).join('\n');
+// Fonts: @@FONT_<NAME>@@ in CSS becomes the base64 of src/fonts/<name>-latin-wght.woff2
+css = css.replace(/@@FONT_([A-Z0-9]+)@@/g, (_, name) => {
+  const f = path.join(SRC, 'fonts', name.toLowerCase() + '-latin-wght.woff2');
+  return fs.readFileSync(f).toString('base64');
+});
 const jsFiles = [...files('core', '.js'), ...files('apps', '.js'), path.join(SRC, 'boot.js')];
 const js = jsFiles.map(f => `/* ---- ${rel(f)} ---- */\n${read(f)}`).join('\n');
 
@@ -29,6 +34,12 @@ const js = jsFiles.map(f => `/* ---- ${rel(f)} ---- */\n${read(f)}`).join('\n');
 if (/<\/script/i.test(js)) throw new Error('JS contains "</script": escape it as "<\\/script"');
 if (/<!--/.test(js)) throw new Error('JS contains "<!--", which can confuse the HTML parser inside <script>');
 if (/<\/style/i.test(css)) throw new Error('CSS contains "</style"');
+// Raw line/paragraph separators or control characters in source are almost always an editing accident.
+jsFiles.forEach(f => {
+  const src = read(f);
+  const bad = src.search(/[\u2028\u2029\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+  if (bad >= 0) throw new Error(`${rel(f)}: unexpected control/separator character at offset ${bad} (use a \\u escape instead)`);
+});
 
 let html = read(path.join(SRC, 'index.html'));
 const readme = /<!--([\s\S]*?)-->/.exec(html);

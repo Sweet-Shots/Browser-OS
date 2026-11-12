@@ -9,18 +9,22 @@
     id: 'todo',
     name: 'To-do',
     icon: OS.appIcons.todo,
-    defaultSize: { w: 440, h: 520 },
+    optional: true,
+    category: 'Productivity',
+    description: 'A simple, satisfying checklist. Drag to reorder, double-click to edit.',
+    keywords: 'tasks checklist todo',
+    defaultSize: { w: 460, h: 560 },
     singleInstance: true,
     launch: function (win) {
       function items() { return win.getState({ items: [] }).items; }
       function commit(list) { win.setState({ items: list }); render(); }
 
       var input = h('input', { class: 'input', type: 'text', placeholder: 'Add a task and press Enter', 'aria-label': 'New task', maxlength: '500' });
-      var addBtn = h('button', { class: 'btn primary', type: 'button', title: 'Add', html: OS.icons.plus });
+      var addBtn = h('button', { class: 'btn primary', type: 'button', title: 'Add', 'aria-label': 'Add task', html: OS.icons.plus });
       var list = h('ul', { class: 'td-list' });
       var footer = h('div', { class: 'td-footer' });
       win.body.classList.add('app-todo');
-      win.body.append(h('form', { class: 'td-add', onsubmit: function (e) { e.preventDefault(); add(); } }, input, addBtn), list, footer);
+      win.body.append(h('div', { class: 'td-head' }, h('h2', null, 'My tasks'), h('form', { class: 'td-add', onsubmit: function (e) { e.preventDefault(); add(); } }, input, addBtn)), list, footer);
       addBtn.addEventListener('click', add);
 
       function add() {
@@ -96,9 +100,11 @@
           list.appendChild(li);
         });
         var done = l.filter(function (x) { return x.done; }).length;
+        if (l.length && done === l.length && !render._celebrated) { render._celebrated = true; OS.sound.play('success'); }
+        if (done < l.length) render._celebrated = false;
         footer.textContent = '';
-        footer.append(h('span', { class: 'muted small' }, (l.length - done) + ' left · ' + done + ' done'),
-          done ? h('button', { class: 'btn', type: 'button', onclick: function () { commit(items().filter(function (x) { return !x.done; })); } }, 'Clear completed') : null);
+        [h('span', { class: 'muted small' }, (l.length - done) + ' left · ' + done + ' done'),
+          done ? h('button', { class: 'btn text small', type: 'button', onclick: function () { commit(items().filter(function (x) { return !x.done; })); } }, 'Clear completed') : null].forEach(function (n) { if (n) footer.appendChild(n); });
       }
       render();
       setTimeout(function () { input.focus(); }, 0);

@@ -35,7 +35,11 @@
     id: 'terminal',
     name: 'Terminal',
     icon: OS.appIcons.terminal,
-    defaultSize: { w: 680, h: 420 },
+    optional: true,
+    category: 'Utilities',
+    description: 'A command line for your files: ls, cd, cat, cp, mv, rm, find, tree and more.',
+    keywords: 'shell command line console',
+    defaultSize: { w: 720, h: 440 },
     launch: function (win, args) {
       var vfs = win.vfs;
       var cwd = vfs.root(), history = [], hIdx = 0, draft = '';
@@ -49,7 +53,8 @@
       scroller.addEventListener('pointerup', function () { if (!getSelection().toString()) input.focus(); });
 
       function cwdPath() { if (!vfs.exists(cwd)) cwd = vfs.root(); return vfs.pathOf(cwd); }
-      function updatePrompt() { promptEl.textContent = 'you@myos:' + cwdPath() + '$ '; }
+      function user() { return ((OS.state.settings.userName || 'you').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'you'); }
+      function updatePrompt() { promptEl.textContent = user() + '@nimbus:' + cwdPath() + '$ '; }
       function print(text, cls) { out.appendChild(h('div', { class: 'term-row' + (cls ? ' ' + cls : '') }, text)); }
       function err(text) { print(text, 'err'); }
       function need(path, what) {
@@ -165,6 +170,47 @@
           if (!a.length) throw new Error('open: missing path');
           OS.openFile(need(a[0], 'open'));
         } },
+        cp: { usage: 'cp [-r] <src> <dest>', desc: 'copy a file (-r for folders)', run: function (a) {
+          var rec = a[0] === '-r' || a[0] === '-R'; if (rec) a = a.slice(1);
+          if (a.length !== 2) throw new Error('cp: usage: cp [-r] <src> <dest>');
+          var src = need(a[0], 'cp');
+          if (vfs.isFolder(src) && !rec) throw new Error('cp: ' + a[0] + ': is a folder (use cp -r)');
+          var dest = vfs.resolvePath(a[1], cwd);
+          if (dest && vfs.isFolder(dest)) { vfs.copy(src, dest, vfs.findChild(dest, vfs.stat(src).name) ? undefined : vfs.stat(src).name); return; }
+          if (dest) throw new Error('cp: ' + a[1] + ': already exists');
+          var r = vfs.resolveParent(a[1], cwd);
+          if (!r.parentId) throw new Error('cp: ' + a[1] + ': folder does not exist');
+          vfs.copy(src, r.parentId, r.name);
+        } },
+        tree: { usage: 'tree [path]', desc: 'show a folder tree', run: function (a) {
+          var id = a.length ? need(a[0], 'tree') : cwd, lines = [vfs.stat(id).name || '/'], count = 0;
+          (function walk(fid, prefix) {
+            var items = vfs.list(fid);
+            items.forEach(function (m, i) {
+              if (count++ > 500) return;
+              var lastOne = i === items.length - 1;
+              lines.push(prefix + (lastOne ? '└── ' : '├── ') + m.name + (m.type === 'folder' ? '/' : ''));
+              if (m.type === 'folder') walk(m.id, prefix + (lastOne ? '    ' : '│   '));
+            });
+          })(id, '');
+          print(lines.join('\n'));
+        } },
+        find: { usage: 'find <text>', desc: 'find files by name', run: function (a) {
+          if (!a.length) throw new Error('find: missing search text');
+          var res = vfs.search(a.join(' '), 100);
+          if (!res.length) { print('No matches.', 'muted'); return; }
+          res.forEach(function (m) { print(m.path + (m.type === 'folder' ? '/' : '')); });
+        } },
+        whoami: { usage: 'whoami', desc: 'print your user name', run: function () { print(user()); } },
+        date: { usage: 'date', desc: 'print the date and time', run: function () { print(new Date().toString()); } },
+        history: { usage: 'history', desc: 'list previous commands', run: function () { history.forEach(function (c, i) { print(String(i + 1).padStart(4) + '  ' + c); }); } },
+        about: { usage: 'about', desc: 'about this system', run: function () {
+          print([OS.storage.APP_NAME + ' (data format v' + OS.state.version + ')',
+            'User:      ' + user(),
+            'Apps:      ' + OS.installedApps().length + ' installed',
+            'Data:      ' + U.formatBytes(OS.storage.dataSize()),
+            'Encrypted: ' + (OS.crypto.isEnabled() ? 'yes (AES-GCM)' : 'no')].join('\n'));
+        } },
         clear: { usage: 'clear', desc: 'clear the screen', run: function () { out.textContent = ''; } }
       };
 
@@ -227,7 +273,7 @@
         else if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); out.textContent = ''; }
       });
 
-      print('MyOS terminal. Type "help" for commands.', 'muted');
+      print(OS.storage.APP_NAME + ' terminal. Type "help" for a list of commands.', 'muted');
       updatePrompt();
       setTimeout(function () { input.focus(); }, 0);
       win._exec = exec; // used by tests

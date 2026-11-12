@@ -1,7 +1,9 @@
 /* =====================================================================
-   CORE 7: WINDOW MANAGER
+   CORE 10: WINDOW MANAGER
    Pointer Events + pointer capture for drag/resize (mouse, pen, touch).
    Windows are kept reachable: the title bar can never leave the screen.
+   Drag a window to the left/right edge to snap it to half the screen,
+   or to the top edge to maximize it.
    ===================================================================== */
 (function () {
   'use strict';
@@ -17,6 +19,8 @@
 
     mount: function (layerEl) {
       this.layer = layerEl;
+      this.snapPreview = h('div', { class: 'snap-preview', hidden: true });
+      layerEl.appendChild(this.snapPreview);
       window.addEventListener('resize', U.debounce(function () { wm.clampAll(); }, 60));
     },
     area: function () {
@@ -32,6 +36,7 @@
       this.windows.push(win);
       this.layer.appendChild(win.el);
       win.focus();
+      OS.sound.play('open');
       this.events.emit('change');
       return win;
     },
@@ -60,6 +65,14 @@
     hasUnsavedWindows: function () { return this.windows.some(function (w) { return w.dirty; }); },
 
     clampAll: function () { this.windows.forEach(function (w) { w._clamp(); }); },
+    showSnapPreview: function (zone) {
+      var p = this.snapPreview;
+      if (!zone) { p.hidden = true; return; }
+      var a = this.area();
+      p.hidden = false;
+      p.style.left = (zone === 'right' ? a.w / 2 : 0) + 'px'; p.style.top = '0px';
+      p.style.width = (zone === 'top' ? a.w : a.w / 2) + 'px'; p.style.height = a.h + 'px';
+    },
 
     /** Keep geometry on screen. */
     clampRect: function (r) {
@@ -79,14 +92,15 @@
     var btnMin = h('button', { class: 'win-ctrl', type: 'button', title: 'Minimize', 'aria-label': 'Minimize', html: OS.icons.minimize });
     var btnMax = h('button', { class: 'win-ctrl', type: 'button', title: 'Maximize', 'aria-label': 'Maximize', html: OS.icons.maximize });
     var btnClose = h('button', { class: 'win-ctrl close', type: 'button', title: 'Close', 'aria-label': 'Close', html: OS.icons.close });
-    var titlebar = h('div', { class: 'win-titlebar' }, h('span', { class: 'ico', html: app.icon }), titleEl, h('div', { class: 'win-ctrls' }, btnMin, btnMax, btnClose));
+    var slot = h('div', { class: 'win-slot' });
+    var titlebar = h('div', { class: 'win-titlebar' }, h('span', { class: 'ico app-ico', html: app.icon }), titleEl, slot, h('div', { class: 'win-ctrls' }, btnMin, btnMax, btnClose));
     var body = h('div', { class: 'win-body', tabindex: '-1' });
     var el = h('div', { class: 'win', role: 'dialog', 'aria-label': app.name }, titlebar, body);
     ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].forEach(function (d) { el.appendChild(h('div', { class: 'rz ' + d, dataset: { dir: d } })); });
 
     var rect = initialRect(app);
     var win = {
-      id: U.uid(6), app: app, el: el, body: body, titlebar: titlebar,
+      id: U.uid(6), app: app, el: el, body: body, titlebar: titlebar, titleSlot: slot, titleEl: titleEl,
       title: app.name, minimized: false, maximized: false, closed: false, dirty: false,
       onSaveShortcut: null,   // optional async fn: called on Ctrl+S before the OS saves
       // shared services
@@ -104,7 +118,11 @@
       onResize: function (cb) { resizeHandlers.push(cb); },
       focus: function () { wm.focus(win); },
       minimize: function () {
-        win.minimized = true; el.classList.add('minimized');
+        if (win.minimized) return;
+        win.minimized = true;
+        OS.sound.play('minimize');
+        el.classList.add('minimizing');
+        setTimeout(function () { el.classList.remove('minimizing'); if (win.minimized) el.classList.add('minimized'); }, 160);
         if (wm.focused === win) { el.classList.remove('focused'); wm.focused = null; wm.focusTop(); }
         wm.events.emit('change');
       },
@@ -120,7 +138,10 @@
         }
         win.closed = true;
         destroyHandlers.forEach(function (fn) { try { fn(); } catch (e) { console.error(e); } });
-        el.remove();
+        if (!force) OS.sound.play('close');
+        el.classList.add('closing');
+        el.style.pointerEvents = 'none';
+        setTimeout(function () { el.remove(); }, force ? 0 : 140);
         wm.windows = wm.windows.filter(function (w) { return w !== win; });
         if (wm.focused === win) { wm.focused = null; wm.focusTop(); }
         OS.events.emit('window-dirty');
@@ -129,6 +150,7 @@
       },
       _clamp: function () {
         if (win.maximized) { fireResize(); return; }
+        if (win.snapped) { snapTo(win.snapped); return; }
         rect = wm.clampRect(rect); apply(); fireResize();
       }
     };
@@ -143,7 +165,19 @@
       // Stored in the data and written on the next save; moving windows alone doesn't count as "unsaved".
       OS.state.windows[app.id] = { x: rect.x, y: rect.y, w: rect.w, h: rect.h, max: win.maximized };
     }
+    /** Snap to the left or right half of the screen. */
+    function snapTo(side) {
+      var a = wm.area();
+      if (!win.snapped) win._preSnap = Object.assign({}, rect);
+      win.snapped = side;
+      rect = { x: side === 'left' ? 0 : Math.floor(a.w / 2), y: 0, w: Math.ceil(a.w / 2), h: a.h };
+      el.classList.add('snapped');
+      apply(); remember(); setTimeout(fireResize, 0);
+    }
+    function unsnap() { win.snapped = null; el.classList.remove('snapped'); }
+    win.snap = snapTo;
     function maximize() {
+      unsnap();
       win.maximized = true; el.classList.add('maximized');
       btnMax.innerHTML = OS.icons.restore; btnMax.title = 'Restore';
       remember(); setTimeout(fireResize, 0);
@@ -156,16 +190,21 @@
 
     // ---- focus on any pointer interaction ----
     el.addEventListener('pointerdown', function () { if (wm.focused !== win) win.focus(); }, true);
+    // keep keyboard focus inside the window you clicked (so app shortcuts work), without stealing it from inputs
+    el.addEventListener('pointerup', function () {
+      setTimeout(function () { if (!win.closed && !el.contains(document.activeElement)) body.focus({ preventScroll: true }); }, 0);
+    });
     el.addEventListener('focusin', function () { if (wm.focused !== win) win.focus(); });
 
     btnMin.addEventListener('click', function (e) { e.stopPropagation(); win.minimize(); });
     btnMax.addEventListener('click', function (e) { e.stopPropagation(); win.toggleMaximize(); });
     btnClose.addEventListener('click', function (e) { e.stopPropagation(); win.close(); });
-    titlebar.addEventListener('dblclick', function (e) { if (!e.target.closest('.win-ctrl')) win.toggleMaximize(); });
+    titlebar.addEventListener('dblclick', function (e) { if (!e.target.closest('.win-ctrl, button, input, [role=tab]')) win.toggleMaximize(); });
 
     // ---- drag by title bar ----
     titlebar.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0 || e.target.closest('.win-ctrl')) return;
+      // controls placed in the title bar (buttons, tabs, inputs) keep their own clicks
+      if (e.button !== 0 || e.target.closest('.win-ctrl, button, input, select, textarea, a, [role=tab]')) return;
       var startX = e.clientX, startY = e.clientY, moved = false, origin = Object.assign({}, rect);
       titlebar.setPointerCapture(e.pointerId);
       function move(ev) {
@@ -173,24 +212,35 @@
         if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
         if (!moved) {
           moved = true; document.body.classList.add('dragging');
-          if (win.maximized) {
-            // un-maximize and keep the window under the pointer proportionally
-            var a = wm.area(), frac = (startX) / a.w;
+          if (win.maximized || win.snapped) {
+            // leave maximized/snapped and keep the window under the pointer proportionally
+            var a = wm.area(), wrect = el.getBoundingClientRect(), frac = (startX - wrect.left) / wrect.width;
+            var pre = win._preSnap || rect;
             win.maximized = false; el.classList.remove('maximized');
+            unsnap();
             btnMax.innerHTML = OS.icons.maximize; btnMax.title = 'Maximize';
-            origin.w = Math.min(rect.w, a.w); origin.h = Math.min(rect.h, a.h);
+            origin.w = Math.min(pre.w, a.w); origin.h = Math.min(pre.h, a.h);
             origin.x = startX - frac * origin.w; origin.y = 0;
+            win._preSnap = null;
           }
         }
         rect = wm.clampRect({ x: origin.x + dx, y: origin.y + dy, w: origin.w, h: origin.h });
         apply();
+        // snap zones (not on narrow screens)
+        var ar = wm.layer.getBoundingClientRect();
+        snapZone = wm.isNarrow() ? null : ev.clientX <= ar.left + 4 ? 'left' : ev.clientX >= ar.right - 5 ? 'right' : ev.clientY <= ar.top + 3 ? 'top' : null;
+        wm.showSnapPreview(snapZone);
       }
+      var snapZone = null;
       function up() {
         titlebar.removeEventListener('pointermove', move);
         titlebar.removeEventListener('pointerup', up);
         titlebar.removeEventListener('pointercancel', up);
         document.body.classList.remove('dragging');
-        if (moved) { remember(); fireResize(); }
+        wm.showSnapPreview(null);
+        if (snapZone === 'top') { win._preSnap = Object.assign({}, rect); maximize(); }
+        else if (snapZone) snapTo(snapZone);
+        else if (moved) { remember(); fireResize(); }
       }
       titlebar.addEventListener('pointermove', move);
       titlebar.addEventListener('pointerup', up);
@@ -203,6 +253,7 @@
         if (e.button !== 0 || win.maximized) return;
         e.preventDefault(); e.stopPropagation();
         win.focus();
+        unsnap();
         var dir = handle.dataset.dir, sx = e.clientX, sy = e.clientY, o = Object.assign({}, rect);
         var a = wm.area();
         handle.setPointerCapture(e.pointerId);

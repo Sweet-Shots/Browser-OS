@@ -7,8 +7,8 @@
   var U = OS.util, h = U.h;
 
   function fatal(title, msg, actions) {
-    var card = h('div', { class: 'screen-card' }, h('h1', null, title), h('p', null, msg), actions || null);
-    document.getElementById('os-root').appendChild(h('div', { class: 'screen' }, card));
+    var card = h('div', { class: 'setup-card' }, h('div', { class: 'setup-icon', html: OS.icons.warning }), h('h1', null, title), h('p', { class: 'setup-text' }, msg), actions || null);
+    document.getElementById('os-root').appendChild(h('div', { class: 'screen setup' }, card));
   }
 
   async function checkBackup(password) {
@@ -47,6 +47,8 @@
       if (pwForEnv) await OS.crypto.unlock(env, pwForEnv);  // backup used a password: keep protecting the data with it
       await OS.wm.closeAll(true);
       OS.state = data;
+      OS.apps.forEach(function (a, id) { if (a.sideloaded) OS.apps.delete(id); });
+      loadSideloaded();
       OS.shell.showDesktop();
       OS.markDirty();
       OS.toast('Backup restored. Save to keep it in the file.', 'ok', 5000);
@@ -55,23 +57,41 @@
     }
   }
 
+  /** Run apps the user installed from a file (Store > Install from file). Errors never stop the boot. */
+  function loadSideloaded() {
+    (OS.state.sideloaded || []).forEach(function (pkg) {
+      if (OS.apps.has(pkg.id)) return;
+      try {
+        var before = new Set(OS.apps.keys());
+        var el = document.createElement('script');
+        el.textContent = '(function(){try{' + pkg.code + '\n}catch(e){console.error("Sideloaded app failed:",e);}})();';
+        document.body.appendChild(el); el.remove();     // the saved file is built from the pristine snapshot, so this never persists in the HTML
+        OS.apps.forEach(function (a, id) { if (!before.has(id)) { a.sideloaded = true; a.optional = false; } });
+      } catch (e) { console.error(e); }
+    });
+  }
+  OS.loadSideloaded = loadSideloaded;
+
   async function boot() {
+    OS.theme.applyDefault();
     OS.shell.mount();
     OS.shell.hideDesktop();
-    OS.shell.applyTheme();
+    var splash = OS.shell.splash();
 
     var raw;
     try { raw = OS.storage.readEmbedded(); }
     catch (e) {
       console.error(e);
-      fatal('This file is damaged', 'The data inside this file could not be read (' + e.message + '). Nothing has been changed. Open a backup copy of the file, or start over with an empty desktop.',
-        h('button', { class: 'btn ghost', type: 'button', onclick: function () { location.reload(); } }, 'Reload'));
+      splash.done();
+      fatal('This file is damaged', 'The data inside this file could not be read (' + e.message + '). Nothing has been changed. Open a backup copy of the file instead.',
+        h('button', { class: 'btn tonal', type: 'button', onclick: function () { location.reload(); } }, 'Reload'));
       return;
     }
 
     var data, password = null;
     try {
       if (raw && raw.encrypted) {
+        splash.done();
         var res = await OS.shell.lockScreen(raw);
         password = res.password;
         data = OS.storage.migrate(res.data);
@@ -83,18 +103,23 @@
       }
     } catch (e) {
       console.error(e);
+      splash.done();
       fatal('Cannot open this file', e.message);
       return;
     }
 
     OS.state = data;
-    OS.shell.applyTheme();
-    if (!data.setupDone) {
-      var pwSet = await OS.shell.setupScreen();
-      data.setupDone = true;
-      if (pwSet) OS.markDirty();
-    }
+    loadSideloaded();
+    await OS.theme.apply();
     OS.shell.showDesktop();
+    splash.done();
+    if (!data.setupDone) {
+      await OS.setup.run();
+      OS.notify('Welcome to ' + OS.storage.APP_NAME, 'Open the guide to learn the basics.', { icon: 'sparkle', sound: false,
+        action: { label: 'Open guide', run: function () { var id = OS.vfs.resolvePath('/Documents/Welcome.md'); if (id) OS.launch('notepad', { fileId: id, preview: true }); } } });
+    } else if (!password) {
+      OS.sound.play('startup');   // may stay silent until the first click: browsers block audio before a gesture
+    }
     OS.storage.backup.start();
     await checkBackup(password);
     password = null;

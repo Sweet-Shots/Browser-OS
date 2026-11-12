@@ -1,5 +1,5 @@
 /* =====================================================================
-   CORE 3: STORAGE
+   CORE 4: STORAGE
    - data model + defaults + migrations
    - reading the embedded <script id="os-data"> tag
    - safe JSON escaping
@@ -11,26 +11,60 @@
   'use strict';
   var U = OS.util;
 
-  var SCHEMA_VERSION = 2;
+  var SCHEMA_VERSION = 3;
+  var APP_NAME = 'Nimbus';
 
   function now() { return Date.now(); }
+
+  /** Optional apps installed on a fresh system (the setup wizard can change this). */
+  var DEFAULT_INSTALLED = ['browser', 'photos', 'music', 'clock', 'solitaire', 'comet', 'sudoku', 'todo', 'calculator', 'paint', 'terminal'];
+  var DEFAULT_SHELF = ['explorer', 'browser', 'notepad', 'photos', 'store', 'settings'];
+  var DEFAULT_DESKTOP_APPS = ['explorer', 'browser', 'store'];
+
+  function welcomeText() {
+    return '# Welcome to Nimbus\n\nEverything you see lives inside **one HTML file**: the system, the apps, and all your files.\n\n' +
+      '## Saving\n' +
+      '- Press **Ctrl+S** (or **Cmd+S**), or click the status area in the corner and choose *Save*.\n' +
+      '- In Chrome or Edge, pick this same file when asked; later saves overwrite it in one keystroke.\n' +
+      '- In Firefox or Safari, a fresh copy is downloaded. Replace the old file with it.\n\n' +
+      '## Getting around\n' +
+      '- Click the circle in the bottom-left corner (or press **Ctrl+K**) to search apps and files.\n' +
+      '- Right-click almost anything for more options.\n' +
+      '- Drag a window to the left or right edge to snap it, or to the top to maximize it.\n' +
+      '- Drag files from your computer onto the desktop or into Files to import them.\n' +
+      '- Get more apps and games in the **Store**.\n\n' +
+      'Try the *Terminal* and type `help`.\n';
+  }
 
   function defaultTree() {
     var t = now();
     var nodes = {};
-    function folder(id, name, parent) { nodes[id] = { id: id, name: name, type: 'folder', parent: parent, created: t, modified: t, children: [] }; if (parent) nodes[parent].children.push(id); }
+    function folder(id, name, parent, extra) { nodes[id] = Object.assign({ id: id, name: name, type: 'folder', parent: parent, created: t, modified: t, children: [] }, extra || {}); if (parent) nodes[parent].children.push(id); }
     function file(id, name, parent, content, mime) { nodes[id] = { id: id, name: name, type: 'file', parent: parent, created: t, modified: t, encoding: 'text', mime: mime, content: content }; nodes[parent].children.push(id); }
     folder('root', '', null);
+    folder('f-desk', 'Desktop', 'root');
     folder('f-docs', 'Documents', 'root');
     folder('f-pics', 'Pictures', 'root');
-    file('f-welcome', 'Welcome.md', 'f-docs',
-      '# Welcome to MyOS\n\nEverything you see lives inside **one HTML file**.\n\n' +
-      '- Press **Ctrl+S** (or **Cmd+S**) to save.\n' +
-      '- In Chrome/Edge, pick this same file when asked, and later saves overwrite it.\n' +
-      '- In Firefox/Safari, a fresh copy is downloaded; replace the old file with it.\n' +
-      '- Drag files from your computer onto the desktop or the Files window to import them.\n\n' +
-      'Try the *Terminal*: type `help`.\n', 'text/markdown');
-    return { root: 'root', nodes: nodes };
+    folder('f-music', 'Music', 'root');
+    folder('f-trash', 'Trash', 'root', { hidden: true });
+    file('f-welcome', 'Welcome.md', 'f-docs', welcomeText(), 'text/markdown');
+    return { root: 'root', nodes: nodes, special: { desktop: 'f-desk', documents: 'f-docs', pictures: 'f-pics', music: 'f-music', trash: 'f-trash' } };
+  }
+
+  function defaultSettings() {
+    return {
+      theme: 'auto',
+      wallpaper: { type: 'preset', value: 'peaks' },
+      accent: 'auto',
+      iconStyle: 'colorful',
+      userName: '',
+      clock24: false,
+      sound: { enabled: true, volume: 0.6, ui: true },
+      shelf: DEFAULT_SHELF.slice(),
+      desktopApps: DEFAULT_DESKTOP_APPS.slice(),
+      browser: { searchEngine: 'wikipedia' },
+      fallbackNoticeDismissed: false
+    };
   }
 
   function defaultData() {
@@ -39,25 +73,43 @@
       fileId: U.uid(16),
       savedAt: 0,
       setupDone: false,
-      settings: {
-        theme: (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light',
-        wallpaper: { type: 'gradient', value: 'aurora' },
-        clock24: false,
-        fallbackNoticeDismissed: false
-      },
+      settings: defaultSettings(),
+      installed: DEFAULT_INSTALLED.slice(),
+      sideloaded: [],
       vfs: defaultTree(),
       apps: { todo: { items: [
-        { id: U.uid(6), text: 'Save this file with Ctrl+S', done: false },
-        { id: U.uid(6), text: 'Try dragging a picture onto the desktop', done: false }
+        { id: U.uid(6), text: 'Save Nimbus with Ctrl+S', done: false },
+        { id: U.uid(6), text: 'Drag a photo onto the desktop', done: false },
+        { id: U.uid(6), text: 'Find a game in the Store', done: false }
       ] } },
       windows: {}
     };
+  }
+
+  /** Make sure the well-known folders exist (used by the v2 -> v3 migration and for repairs). */
+  function ensureSpecialFolders(d) {
+    var nodes = d.vfs.nodes, root = nodes[d.vfs.root], t = now();
+    d.vfs.special = d.vfs.special || {};
+    [['desktop', 'Desktop'], ['documents', 'Documents'], ['pictures', 'Pictures'], ['music', 'Music'], ['trash', 'Trash']].forEach(function (p) {
+      var key = p[0], name = p[1], id = d.vfs.special[key];
+      if (id && nodes[id] && nodes[id].type === 'folder') return;
+      // reuse an existing root folder with that name if there is one
+      id = root.children.find(function (c) { return nodes[c] && nodes[c].type === 'folder' && nodes[c].name.toLowerCase() === name.toLowerCase(); });
+      if (!id) {
+        id = 'f-' + key + '-' + U.uid(4);
+        nodes[id] = { id: id, name: name, type: 'folder', parent: root.id, created: t, modified: t, children: [] };
+        root.children.push(id);
+      }
+      if (key === 'trash') nodes[id].hidden = true;
+      d.vfs.special[key] = id;
+    });
   }
 
   /**
    * Migrations: migrations[n] upgrades a version-n object to version n+1.
    * Add a new entry (and bump SCHEMA_VERSION) whenever the data shape changes.
    */
+  var OLD_GRADIENTS = { aurora: 'bloom', ocean: 'tide', sunset: 'dunes', forest: 'meadow', dusk: 'dusk', mono: 'peaks' };
   var migrations = {
     // v1 had no clock setting and stored window geometry under "geometry".
     1: function (d) {
@@ -65,13 +117,21 @@
       if (d.settings.clock24 == null) d.settings.clock24 = false;
       if (d.geometry && !d.windows) { d.windows = d.geometry; }
       delete d.geometry;
+    },
+    // v2 -> v3 (Nimbus): new folders and trash, installable apps, shelf, sounds, new wallpapers.
+    2: function (d) {
+      var s = d.settings = d.settings || {};
+      if (s.wallpaper && s.wallpaper.type === 'gradient') s.wallpaper = { type: 'preset', value: OLD_GRADIENTS[s.wallpaper.value] || 'peaks' };
+      if (!d.installed) d.installed = DEFAULT_INSTALLED.slice();
+      if (!d.sideloaded) d.sideloaded = [];
+      if (d.vfs && d.vfs.nodes) ensureSpecialFolders(d);
     }
   };
 
   function migrate(d) {
     if (!d || typeof d !== 'object') throw new Error('Data is not an object');
     if (!d.version) d.version = 1;
-    if (d.version > SCHEMA_VERSION) throw new Error('This file was saved by a newer version of MyOS (data v' + d.version + ').');
+    if (d.version > SCHEMA_VERSION) throw new Error('This file was saved by a newer version of Nimbus (data v' + d.version + ').');
     while (d.version < SCHEMA_VERSION) {
       var m = migrations[d.version];
       if (!m) throw new Error('No migration from data v' + d.version);
@@ -82,7 +142,12 @@
     var def = defaultData();
     if (!d.fileId) d.fileId = def.fileId;
     d.settings = Object.assign({}, def.settings, d.settings || {});
+    d.settings.sound = Object.assign({}, def.settings.sound, d.settings.sound || {});
+    d.settings.browser = Object.assign({}, def.settings.browser, d.settings.browser || {});
     if (!d.vfs || !d.vfs.nodes || !d.vfs.nodes[d.vfs.root]) d.vfs = def.vfs;
+    ensureSpecialFolders(d);
+    if (!Array.isArray(d.installed)) d.installed = def.installed;
+    if (!Array.isArray(d.sideloaded)) d.sideloaded = [];
     d.apps = d.apps || {};
     d.windows = d.windows || {};
     if (d.setupDone == null) d.setupDone = true;
@@ -179,8 +244,8 @@
         try {
           if (!fileHandle) {
             fileHandle = await window.showSaveFilePicker({
-              suggestedName: 'myos.html',
-              types: [{ description: 'MyOS file', accept: { 'text/html': ['.html', '.htm'] } }]
+              suggestedName: 'nimbus.html',
+              types: [{ description: 'Nimbus file', accept: { 'text/html': ['.html', '.htm'] } }]
             });
           }
           var w = await fileHandle.createWritable();
@@ -201,9 +266,9 @@
             '). Your browser may block this feature. A copy is being downloaded instead.', { key: 'fsa-fail' });
         }
       }
-      U.downloadBlob(blob, 'myos.html');
+      U.downloadBlob(blob, 'nimbus.html');
       finish(counterAtSave);
-      OS.toast('Downloaded myos.html (' + U.formatBytes(blob.size) + ')', 'ok');
+      OS.toast('Downloaded nimbus.html (' + U.formatBytes(blob.size) + ')', 'ok');
       if (!opts.download && !OS.state.settings.fallbackNoticeDismissed) showFallbackNotice();
       return true;
     } catch (err) {
@@ -226,7 +291,7 @@
   function showFallbackNotice() {
     if (fallbackShown) return;
     fallbackShown = true;
-    OS.notice('<b>Your browser saved a new copy.</b> This browser cannot overwrite the open file, so it downloaded <i>myos.html</i>. ' +
+    OS.notice('<b>Your browser saved a new copy.</b> This browser cannot overwrite the open file, so it downloaded <i>nimbus.html</i>. ' +
       'Replace your old file with the downloaded one (for example, copy it back to your USB stick). Your old file was not changed.',
       { dontShowAgain: function () { if (OS.state) OS.state.settings.fallbackNoticeDismissed = true; } });
   }
@@ -235,7 +300,7 @@
   function forgetHandle() { fileHandle = null; }
 
   /* --------------------- crash-recovery backup --------------------- */
-  var LS_PREFIX = 'myos-backup:';
+  var LS_PREFIX = 'nimbus-backup:';
   var backup = {
     lastCounter: 0,
     timer: null,
@@ -286,7 +351,7 @@
       if (!dbp) dbp = new Promise(function (res, rej) {
         if (!window.indexedDB) return rej(new Error('IndexedDB unavailable'));
         var r;
-        try { r = indexedDB.open('myos-backup', 1); } catch (e) { return rej(e); }
+        try { r = indexedDB.open('nimbus-backup', 1); } catch (e) { return rej(e); }
         r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
         r.onsuccess = function () { res(r.result); };
         r.onerror = function () { rej(r.error); };
@@ -310,7 +375,7 @@
   })();
 
   OS.storage = {
-    SCHEMA_VERSION: SCHEMA_VERSION, defaultData: defaultData, migrate: migrate, readEmbedded: readEmbedded,
+    SCHEMA_VERSION: SCHEMA_VERSION, APP_NAME: APP_NAME, defaultData: defaultData, defaultSettings: defaultSettings, DEFAULT_INSTALLED: DEFAULT_INSTALLED, migrate: migrate, readEmbedded: readEmbedded,
     escapeJSON: escapeJSON, buildHTML: buildHTML, dataSize: dataSize, save: save, hasFSA: hasFSA,
     forgetHandle: forgetHandle, backup: backup, makePayload: makePayload
   };
